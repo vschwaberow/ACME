@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <algorithm>
 #include <string>
+#include <iostream>
+#include <sstream>
 
 extern "C" {
 #include "acme.h"
@@ -54,7 +56,7 @@ static PyObject *acme_source(PyObject *self, PyObject *args)
 	Input_now = &new_input;
 	commonSetupDebug(self , args);
 
-	char *command;
+	std::string command;
 
 	if (!PyArg_ParseTuple(args, "s", &command))
 	{
@@ -65,8 +67,8 @@ static PyObject *acme_source(PyObject *self, PyObject *args)
 	std::string theSource = command;
 	std::replace( theSource.begin(), theSource.end(), '\t', ' ');
 	// Hack in extra source termination
-	char *finalBuffer = (char *)malloc(theSource.length() + 10);
-	strcpy(finalBuffer , theSource.c_str());
+	char *finalBuffer = new char[theSource.length() + 10];
+	strcpy(finalBuffer, theSource.c_str());
 	for (size_t i = 0 ; i < theSource.length() ; i++)
 	{
 		if (finalBuffer[i] == 0x0d)
@@ -84,7 +86,7 @@ static PyObject *acme_source(PyObject *self, PyObject *args)
 	Input_now->src.ram_ptr = finalBuffer;
 	Parse_until_eob_or_eof();
 
-	free(finalBuffer);
+	delete[] finalBuffer;
 
 	return PyLong_FromLong(0);
 }
@@ -92,13 +94,10 @@ static PyObject *acme_source(PyObject *self, PyObject *args)
 // Outputs full source for a byte value, which can be slow. It is needed because all the logic for handling the program counter is included in the buffer parser.
 void Output_8b_source(int value)
 {
-	char theLine[128];
-	sprintf(theLine , "!by %d" , value);
-	int len = strlen(theLine);
-	theLine[len] = CHAR_EOS;
-	theLine[len+1] = CHAR_EOF;
-	theLine[len+2] = '\0';
-	Input_now->src.ram_ptr = theLine;
+	std::ostringstream oss;
+	oss << "!by " << value << CHAR_EOS << CHAR_EOF;
+	std::string theLine = oss.str();
+	Input_now->src.ram_ptr = const_cast<char*>(theLine.c_str());
 	Input_now->source_is_ram = true;
 	Input_now->state = INPUTSTATE_NORMAL;
 	Parse_until_eob_or_eof();
@@ -197,7 +196,7 @@ static PyObject *acme_bytestr(PyObject *self, PyObject *args)
 					continue;
 				}
 				// https://www.w3schools.com/python/gloss_python_escape_characters.asp
-				printf("****EEK: %s\n" , command);
+				std::cout << "****EEK: " << command << std::endl;
 				Throw_serious_error("Unexpected python encoding type");
 			}
 			Output_8b_source(command[0]);
@@ -253,15 +252,14 @@ extern "C" int RunScript_Python(const char *parameters , const char *name , cons
     wchar_t *program = Py_DecodeLocale(name, NULL);
     if (program == NULL)
 	{
-        fprintf(stderr, "Fatal error: cannot decode '%s'\n" , name);
-        exit(1);
-    }
-
+		std::cerr << "Fatal error: cannot decode '" << name << "'\n";
+		std::exit(1);
+	}
     /* Add a built-in module, before Py_Initialize */
     if (PyImport_AppendInittab("acme", PyInit_acme) == -1)
 	{
-        fprintf(stderr, "Error: could not extend in-built modules table\n");
-        exit(1);
+		std::cerr << "Error: could not extend in-built modules table\n";
+		std::exit(1);
     }
 
 	// Source preamble...
@@ -297,7 +295,7 @@ extern "C" int RunScript_Python(const char *parameters , const char *name , cons
     if (!pmodule)
 	{
         PyErr_Print();
-        fprintf(stderr, "Error: could not import module 'acme'\n");
+		std::cerr << "Error: could not import module 'acme'\n";
     }
 
 	PyRun_SimpleString(fullSource.c_str());
