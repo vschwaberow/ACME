@@ -20,7 +20,7 @@ extern "C" {
 
 static input_t sInputContext;
 
-static char *unexpectedPythonType = "Unexpected python type";
+//static char *unexpectedPythonType = "Unexpected python type";
 
 static void commonSetupDebug(PyObject *self, PyObject *args)
 {
@@ -49,46 +49,39 @@ static void commonSetupDebug(PyObject *self, PyObject *args)
 #endif
 }
 
-static PyObject *acme_source(PyObject *self, PyObject *args)
+static PyObject* acme_source(PyObject* self, PyObject* args)
 {
-	// Setup a fake input source for the assembler to use
-	input_t	new_input = sInputContext;
-	Input_now = &new_input;
-	commonSetupDebug(self , args);
+    // Setup a fake input source for the assembler to use
+    input_t new_input = sInputContext;
+    Input_now = &new_input;
+    commonSetupDebug(self, args);
 
-	std::string command;
+    const char* command;
+    if (!PyArg_ParseTuple(args, "s", &command))
+    {
+        PyErr_SetString(PyExc_TypeError, "Expected a string argument");
+        return nullptr;
+    }
 
-	if (!PyArg_ParseTuple(args, "s", &command))
-	{
-		Throw_error(unexpectedPythonType);
-		return NULL;
-	}
+    std::string theSource = command;
+    std::replace(theSource.begin(), theSource.end(), '\t', ' ');
 
-	std::string theSource = command;
-	std::replace( theSource.begin(), theSource.end(), '\t', ' ');
-	// Hack in extra source termination
-	char *finalBuffer = new char[theSource.length() + 10];
-	strcpy(finalBuffer, theSource.c_str());
-	for (size_t i = 0 ; i < theSource.length() ; i++)
-	{
-		if (finalBuffer[i] == 0x0d)
-		{
-			finalBuffer[i] = CHAR_EOS;
-		}
-		else if (finalBuffer[i] == 0x0a)
-		{
-			finalBuffer[i] = CHAR_EOS;
-		}
-	}
-	finalBuffer[theSource.length() + 1] = CHAR_EOF;
-	finalBuffer[theSource.length() + 2] = CHAR_EOF;
-	finalBuffer[theSource.length() + 3] = CHAR_EOF;
-	Input_now->src.ram_ptr = finalBuffer;
-	Parse_until_eob_or_eof();
+    // Hack in extra source termination
+    std::string finalBuffer = theSource;
+    for (char& c : finalBuffer)
+    {
+        if (c == 0x0d || c == 0x0a)
+        {
+            c = CHAR_EOS;
+        }
+    }
+    finalBuffer += CHAR_EOF;
+    finalBuffer += CHAR_EOF;
+    finalBuffer += CHAR_EOF;
+    Input_now->src.ram_ptr = finalBuffer.data();
+    Parse_until_eob_or_eof();
 
-	delete[] finalBuffer;
-
-	return PyLong_FromLong(0);
+    return PyLong_FromLong(0);
 }
 
 // Outputs full source for a byte value, which can be slow. It is needed because all the logic for handling the program counter is included in the buffer parser.
@@ -103,146 +96,128 @@ void Output_8b_source(int value)
 	Parse_until_eob_or_eof();
 }
 
-static PyObject *acme_bytenum(PyObject *self, PyObject *args)
+static int acme_bytenum(PyObject* self, PyObject* args)
 {
-	// Setup a fake input source for the assembler to use
-	input_t	new_input = sInputContext;
-	Input_now = &new_input;
-	commonSetupDebug(self , args);
+    // Setup a fake input source for the assembler to use
+    input_t new_input = sInputContext;
+    Input_now = &new_input;
+    commonSetupDebug(self, args);
 
-	int theInt;
+    int theInt;
 
-	if (!PyArg_ParseTuple(args, "i", &theInt))
-	{
-		Throw_error(unexpectedPythonType);
-		return NULL;
-	}
+    if (!PyArg_ParseTuple(args, "i", &theInt))
+    {
+        throw std::runtime_error("Unexpected Python type");
+    }
 
-	Output_8b_source(theInt);
+    Output_8b_source(theInt);
 
-	return PyLong_FromLong(0);
+    return 0;
 }
 
-static PyObject *acme_bytestr(PyObject *self, PyObject *args)
+static int acme_bytestr(PyObject* self, PyObject* args)
 {
-	// Setup a fake input source for the assembler to use
-	input_t	new_input = sInputContext;
-	Input_now = &new_input;
-	commonSetupDebug(self , args);
+    // Setup a fake input source for the assembler to use
+    input_t new_input = sInputContext;
+    Input_now = &new_input;
+    commonSetupDebug(self, args);
 
-	char *command;
-	if (!PyArg_ParseTuple(args, "s", &command))
-	{
-		Throw_error(unexpectedPythonType);
-		return NULL;
-	}
-	char *originalCommand = command;
+    char* command;
+    if (!PyArg_ParseTuple(args, "s", &command))
+    {
+        throw std::runtime_error("Unexpected Python type");
+    }
 
-//	printf("bytestr: %s\n" , command);
+    if (strncmp(command, "bytearray(", 10) == 0)
+    {
+        command += 10;
+    }
 
-	if (strncmp(command , "bytearray(" , 10) == 0)
-	{
-		command += 10;
-	}
+    if (strncmp(command, "b'", 2) == 0 || strncmp(command, "b\"", 2) == 0)
+    {
+        char endQuoteChar = command[1];
+        command += 2;
+        while (command[0] != endQuoteChar)
+        {
+            if (command[0] == '\\')
+            {
+                if (command[1] == 'x')
+                {
+                    command += 2;
+                    char temp[3] = { command[0], command[1], '\0' };
+                    Output_8b_source(strtol(temp, nullptr, 16));
+                    command += 2;
+                    continue;
+                }
+                if (command[1] == '\'' || command[1] == '\\')
+                {
+                    Output_8b_source(command[1]);
+                    command += 2;
+                    continue;
+                }
+                if (command[1] == 'b')
+                {
+                    Output_8b_source(0x08);
+                    command += 2;
+                    continue;
+                }
+                if (command[1] == 't')
+                {
+                    Output_8b_source(0x09);
+                    command += 2;
+                    continue;
+                }
+                if (command[1] == 'n')
+                {
+                    Output_8b_source(0x0a);
+                    command += 2;
+                    continue;
+                }
+                throw std::runtime_error("Unexpected Python encoding type");
+            }
+            Output_8b_source(command[0]);
+            command++;
+        }
+        return 0;
+    }
 
-	if (strncmp(command , "b'" , 2) == 0 || strncmp(command , "b\"" , 2) == 0)
-	{
-		char endQuoteChar = command[1];
-		command += 2;
-		while (command[0] != endQuoteChar)
-		{
-			if (command[0] == '\\')
-			{
-				if (command[1] == 'x')
-				{
-					command+=2;
-					char temp[1024];
-					int pos = 0;
-					temp[0] = command[0];
-					temp[1] = command[1];
-					temp[2] = '\0';
-					Output_8b_source(strtol(temp , 0 , 16));
-					command+=2;
-					continue;
-				}
-				if (command[1] == '\'' || command[1] == '\\')
-				{
-					Output_8b_source(command[1]);
-					command+=2;
-					continue;
-				}
-				if (command[1] == 'b')
-				{
-					Output_8b_source(0x08);
-					command+=2;
-					continue;
-				}
-				if (command[1] == 't')
-				{
-					Output_8b_source(0x09);
-					command+=2;
-					continue;
-				}
-				if (command[1] == 'n')
-				{
-					Output_8b_source(0x0a);
-					command+=2;
-					continue;
-				}
-				if (command[1] == 'r')
-				{
-					Output_8b_source(0x0d);
-					command+=2;
-					continue;
-				}
-				// https://www.w3schools.com/python/gloss_python_escape_characters.asp
-				std::cout << "****EEK: " << command << std::endl;
-				Throw_serious_error("Unexpected python encoding type");
-			}
-			Output_8b_source(command[0]);
-			command++;
-		}
-//		PyMem_Free(originalCommand);
-		return PyLong_FromLong(0);
-	}
-	if (command[0] == '[')
-	{
-		command++;
-		char *tok = strtok(command,",]");
-		while (tok != 0)
-		{
-			Output_8b_source(atoi(tok));
-			tok = strtok(0,",]");
-		}
-//		PyMem_Free(originalCommand);
-		return PyLong_FromLong(0);
-	}
+    if (command[0] == '[')
+    {
+        command++;
+        char* tok = strtok(command, ",]");
+        while (tok != nullptr)
+        {
+            Output_8b_source(atoi(tok));
+            tok = strtok(nullptr, ",]");
+        }
+        return 0;
+    }
 
-	Output_8b_source(atoi(command));
+    Output_8b_source(atoi(command));
 
-//	PyMem_Free(originalCommand);
-	return PyLong_FromLong(0);
+    return 0;
 }
 
-static PyMethodDef AcmeMethods[] = {
+static const PyMethodDef AcmeMethods[] = {
 	{"source",  acme_source, METH_VARARGS, "Adds source code to be assembled."},
 	{"bytenum",  acme_bytenum, METH_VARARGS, "Adds byte(s) to output as number."},
 	{"bytestr",  acme_bytestr, METH_VARARGS, "Adds byte(s) to output as string."},
 	{NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
-static struct PyModuleDef acmemodule = {
+static const PyModuleDef acmemodule = {
     PyModuleDef_HEAD_INIT,
-    "acme",   /* name of module */
-    NULL, /* module documentation, may be NULL */
-    -1,       /* size of per-interpreter state of the module,
-                 or -1 if the module keeps state in global variables. */
+    "acme",   // name of module
+    nullptr,  // module documentation, may be nullptr
+    -1,       // size of per-interpreter state of the module,
+              // or -1 if the module keeps state in global variables.
     AcmeMethods
 };
 
-PyMODINIT_FUNC PyInit_acme(void)
+static PyObject* PyInit_acme()
 {
-	return PyModule_Create(&acmemodule);
+	PyModuleDef* module = const_cast<PyModuleDef*>(&acmemodule);
+	return PyModule_Create(module);
 }
 
 extern "C" int RunScript_Python(const char *parameters , const char *name , const char *python)
