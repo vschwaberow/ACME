@@ -397,7 +397,7 @@ static const char* long_option(const char* string) {
 		format_msvc = TRUE;
 	else if(strcmp(string, OPTION_LIB) == 0)
 	{
-		gLibraryIncludes[gNumLibraryIncludes++] = _strdup(cliargs_get_string("library include"));
+	//	gLibraryIncludes[gNumLibraryIncludes++] = _strdup(cliargs_get_string("library include"));
 	}
 	else if(strcmp(string, OPTION_PDB) == 0)
 		PDB_filename = cliargs_get_string(name_pdbfile);
